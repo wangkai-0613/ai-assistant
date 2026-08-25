@@ -1,0 +1,12 @@
+* @wangkai-0613
+
+/app/core/ @wangkai-0613
+/app/application.py @wangkai-0613
+/main.py @wangkai-0613
+/tests/ @wangkai-0613
+/app/features/task_course/ @arcadiamuran-web @wangkai-0613
+/app/features/ai_voice/ @muzi2887 @wangkai-0613
+/app/features/weather_system/ @Fysync @wangkai-0613
+/app/shell/ @nicheng12 @wangkai-0613
+/app/resources/ @nicheng12 @wangkai-0613
+

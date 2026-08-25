@@ -1,0 +1,55 @@
+QMainWindow, QWidget {
+    background: #f7faff;
+    color: #1c2639;
+    font-family: "Microsoft YaHei UI";
+    font-size: 14px;
+}
+
+QWidget#sidebar {
+    background: #ffffff;
+    border-right: 1px solid #e1e8f5;
+}
+
+QLabel#brand {
+    font-size: 20px;
+    font-weight: 700;
+}
+
+QLabel#pageTitle {
+    font-size: 26px;
+    font-weight: 700;
+}
+
+QLabel#mutedText {
+    color: #697589;
+}
+
+QListWidget {
+    background: transparent;
+    border: none;
+    outline: none;
+}
+
+QListWidget::item {
+    padding: 12px 14px;
+    margin: 3px 0;
+    border-radius: 8px;
+}
+
+QListWidget::item:selected {
+    background: #edf4ff;
+    color: #2f74f4;
+}
+
+QPushButton {
+    min-height: 34px;
+    padding: 0 14px;
+    border: 1px solid #d8e1f0;
+    border-radius: 7px;
+    background: #ffffff;
+}
+
+QPushButton:hover {
+    border-color: #2f74f4;
+}
+
