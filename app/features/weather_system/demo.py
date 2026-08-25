@@ -104,6 +104,8 @@ def main() -> int:
 
     refresh_button.clicked.connect(on_refresh_clicked)
 
+    window._weather_fetchers: list[WeatherFetcher] = []
+
     def on_query_clicked() -> None:
         city_name = city_input.text().strip()
         if not city_name:
@@ -113,6 +115,11 @@ def main() -> int:
         weather_label.setText("正在查询天气…")
         query_button.setEnabled(False)
         fetcher = WeatherFetcher(city_name)
+        window._weather_fetchers.append(fetcher)
+
+        def cleanup() -> None:
+            if fetcher in window._weather_fetchers:
+                window._weather_fetchers.remove(fetcher)
 
         def on_done(summary: WeatherSummary) -> None:
             rain = f"降雨概率 {summary.rain_probability}%" if summary.rain_probability is not None else "无降雨数据"
@@ -120,10 +127,12 @@ def main() -> int:
                 f"{summary.city} {summary.temperature_c}°C\n{summary.description}\n{rain}"
             )
             query_button.setEnabled(True)
+            cleanup()
 
         def on_failed(message: str) -> None:
             weather_label.setText(f"查询失败：{message}")
             query_button.setEnabled(True)
+            cleanup()
 
         fetcher.done.connect(on_done)
         fetcher.failed.connect(on_failed)
