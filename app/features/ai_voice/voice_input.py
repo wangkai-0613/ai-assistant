@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import time
-from typing import Callable
+from collections.abc import Callable
 
 
 class VoiceInputUnavailable(Exception):
@@ -55,7 +55,7 @@ class VoiceRecognizer:
                     phrase = reco_result.PhraseInfo.GetText()
                     if phrase:
                         phrases.append(phrase)
-                except Exception:
+                except Exception:  # noqa: BLE001, S110 - COM 回调，任何异常都不能向上抛出
                     pass
 
         try:

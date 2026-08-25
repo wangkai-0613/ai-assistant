@@ -1,6 +1,9 @@
 from datetime import datetime
 
-from app.features.ai_voice.task_parser import fallback_parse_task, looks_like_task_request
+from app.features.ai_voice.task_parser import (
+    fallback_parse_task,
+    looks_like_task_request,
+)
 
 
 def test_fallback_parse_task_extracts_title_and_time() -> None:

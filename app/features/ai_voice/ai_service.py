@@ -14,7 +14,13 @@ from typing import Literal
 
 from app.core.contracts import TaskDraft
 
-from .ai_client import AIBackendError, AIRouter, ChatMessage, OllamaBackend, OpenRouterBackend
+from .ai_client import (
+    AIBackendError,
+    AIRouter,
+    ChatMessage,
+    OllamaBackend,
+    OpenRouterBackend,
+)
 from .config import AIConfig, load_ai_config
 from .task_parser import fallback_parse_task, looks_like_task_request
 
