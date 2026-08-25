@@ -67,10 +67,21 @@ class WeatherPage(QWidget):
         self.weather_label.setWordWrap(True)
         self._card_layout.addWidget(self.weather_label)
 
+        self._show_cached()
+
         layout.addWidget(card)
         layout.addStretch(1)
 
         self.query_button.clicked.connect(self._on_query)
+
+    def _show_cached(self) -> None:
+        cached = self.context.get_service("weather").get_cached(self.city_input.text().strip())
+        if cached is not None:
+            rain = f"降雨概率 {cached.rain_probability}%" if cached.rain_probability is not None else "暂无降雨数据"
+            self.weather_label.setText(
+                f"{cached.city}  {cached.temperature_c}°C（缓存）\n"
+                f"{cached.description}\n{rain}"
+            )
 
     def _on_query(self) -> None:
         city = self.city_input.text().strip()
@@ -127,7 +138,6 @@ class SystemPage(QWidget):
         self.memory_label = QLabel("内存：--")
         self.disk_label = QLabel("磁盘：--")
         self.cpu_label = QLabel("CPU：--")
-        self.cpu_label.setObjectName("mutedText")
         self._card_layout.addWidget(self.memory_label)
         self._card_layout.addWidget(self.disk_label)
         self._card_layout.addWidget(self.cpu_label)
@@ -174,10 +184,13 @@ class SettingsPage(QWidget):
         self.key_input.setPlaceholderText("OpenRouter API Key（可选，不会写入仓库）")
         self.voice_check = QCheckBox("启用语音提示")
         self.voice_check.setChecked(bool(self.settings.get("voice_enabled", True)))
+        self.autostart_check = QCheckBox("开机自启")
+        self.autostart_check.setChecked(context.get_service("autostart").is_enabled())
 
         form.addRow("默认城市", self.city_input)
         form.addRow("OpenRouter Key", self.key_input)
         form.addRow("", self.voice_check)
+        form.addRow("", self.autostart_check)
         self._card_layout = card.layout()
         self._card_layout.addLayout(form)
 
@@ -197,6 +210,7 @@ class SettingsPage(QWidget):
         self.settings.set("city", self.city_input.text().strip() or "武汉")
         self.settings.set("openrouter_key", self.key_input.text().strip())
         self.settings.set("voice_enabled", self.voice_check.isChecked())
+        self.context.get_service("autostart").set_enabled(self.autostart_check.isChecked())
         self.context.events.settings_changed.emit()
         self.status_label.setText("已保存")
 

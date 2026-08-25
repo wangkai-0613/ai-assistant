@@ -11,10 +11,10 @@ from app.core.contracts import SystemSummary
 
 
 class SystemService:
-    def snapshot(self, with_cpu: bool = False) -> SystemSummary:
+    def snapshot(self) -> SystemSummary:
         memory = psutil.virtual_memory()
         disk = psutil.disk_usage(psutil.disk_partitions()[0].mountpoint)
-        cpu = psutil.cpu_percent(interval=0.1) if with_cpu else None
+        cpu = psutil.cpu_percent(interval=0.1)
         return SystemSummary(
             memory_percent=memory.percent,
             disk_percent=disk.percent,
