@@ -58,8 +58,21 @@ class VoiceRecognizer:
                 except Exception:  # noqa: BLE001, S110 - COM 回调，任何异常都不能向上抛出
                     pass
 
+        # listen() 通常在 QThread/普通后台线程里执行，该线程没有默认的 COM
+        # 单元套间，必须先 CoInitialize 才能创建/使用下面这些 COM 对象，
+        # 否则每次都会报“尚未调用 CoInitialize”。
+        pythoncom.CoInitialize()
         try:
-            recognizer = win32com.client.Dispatch("SAPI.SpSharedRecognizer")
+            # 用进程内识别器（SpInprocRecognizer），不用共享识别器
+            # （SpSharedRecognizer）：共享识别器的音频输入由系统统一管理，
+            # 只有跑过 Windows “语音识别”设置向导才会有默认麦克风绑定，
+            # 而且程序无法自己指定音频输入（尝试赋值会报 SAPI 错误
+            # 0x8004505F/SPERR_NOT_SUPPORTED_FOR_SHARED_RECOGNIZER）——
+            # 这台机器从未跑过向导时，共享识别器完全收不到任何声音，
+            # 麦克风本身正常也无济于事。进程内识别器由本进程私有，
+            # 允许显式绑定默认多媒体输入设备。
+            recognizer = win32com.client.Dispatch("SAPI.SpInprocRecognizer")
+            recognizer.AudioInputStream = win32com.client.Dispatch("SAPI.SpMMAudioIn")
             context = recognizer.CreateRecoContext()
             grammar = context.CreateGrammar()
             grammar.DictationSetState(1)
@@ -70,8 +83,17 @@ class VoiceRecognizer:
                 pythoncom.PumpWaitingMessages()
                 time.sleep(0.05)
 
+            # 用户刚说完就点“停止”时，SAPI 可能还没有把最后一句的静音
+            # 断点识别完；停止前多泵一会儿消息循环，给最后一句收尾的机会。
+            grace_deadline = time.time() + 1.5
+            while time.time() < grace_deadline:
+                pythoncom.PumpWaitingMessages()
+                time.sleep(0.05)
+
             grammar.DictationSetState(0)
         except Exception as exc:
             raise VoiceInputUnavailable(f"本地语音识别不可用：{exc}") from exc
+        finally:
+            pythoncom.CoUninitialize()
 
         return "".join(phrases).strip()

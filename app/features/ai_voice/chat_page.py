@@ -13,6 +13,7 @@ from datetime import datetime
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -131,6 +132,9 @@ class ChatPage(QWidget):
         self.recognizer = VoiceRecognizer()
         self._chat_thread: _ChatWorker | None = None
         self._voice_thread: _VoiceWorker | None = None
+        app_instance = QApplication.instance()
+        if app_instance is not None:
+            app_instance.aboutToQuit.connect(self._on_about_to_quit)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(32, 32, 32, 32)
@@ -258,6 +262,31 @@ class ChatPage(QWidget):
         self.mic_button.setChecked(False)
         self.mic_button.setText("🎙 录音")
         self.mic_button.setEnabled(True)
+
+    # ------------------------------------------------------------------ #
+    # 退出前清理：Qt 在删除仍在运行的 QThread 时会报
+    # "QThread: Destroyed while thread is still running" 并异常终止进程
+    # （关闭窗口时若正好有 AI 请求或录音还没结束就会触发）。
+    # 在真正退出前主动停止/等待，等不到就强制结束，避免整个程序崩溃。
+    # ------------------------------------------------------------------ #
+    def _on_about_to_quit(self) -> None:
+        # 先取出引用再操作：等待期间对应的 finished 信号可能已经把
+        # self._voice_thread / self._chat_thread 改写成 None，直接反复读取
+        # self.xxx 会在 terminate()/wait() 之间遇到属性已变 None 的竞态。
+        voice_thread, self._voice_thread = self._voice_thread, None
+        if voice_thread is not None:
+            voice_thread.stop()
+            if not voice_thread.wait(2000):
+                voice_thread.terminate()
+                voice_thread.wait()
+
+        chat_thread, self._chat_thread = self._chat_thread, None
+        if chat_thread is not None:
+            # 网络请求（httpx）没有协作式取消手段，进程本来就要退出了，
+            # 象征性等一下即可，等不到就直接终止线程。
+            if not chat_thread.wait(100):
+                chat_thread.terminate()
+                chat_thread.wait()
 
 
 def create_page(context: AppContext) -> QWidget:
