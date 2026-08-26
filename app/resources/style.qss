@@ -1,3 +1,9 @@
+/* ============================================================
+   小云桌面助手 — 公共样式表
+   4号 nicheng12 负责维护
+   ============================================================ */
+
+/* ---- 全局 ---- */
 QMainWindow, QWidget {
     background: #f7faff;
     color: #1c2639;
@@ -5,6 +11,7 @@ QMainWindow, QWidget {
     font-size: 14px;
 }
 
+/* ---- 侧边栏 ---- */
 QWidget#sidebar {
     background: #ffffff;
     border-right: 1px solid #e1e8f5;
@@ -15,6 +22,7 @@ QLabel#brand {
     font-weight: 700;
 }
 
+/* ---- 页面标题 ---- */
 QLabel#pageTitle {
     font-size: 26px;
     font-weight: 700;
@@ -24,6 +32,7 @@ QLabel#mutedText {
     color: #697589;
 }
 
+/* ---- 导航列表 ---- */
 QListWidget {
     background: transparent;
     border: none;
@@ -41,6 +50,7 @@ QListWidget::item:selected {
     color: #2f74f4;
 }
 
+/* ---- 按钮 ---- */
 QPushButton {
     min-height: 34px;
     padding: 0 14px;
@@ -53,3 +63,258 @@ QPushButton:hover {
     border-color: #2f74f4;
 }
 
+QPushButton:pressed {
+    background: #edf4ff;
+}
+
+QPushButton#primaryButton {
+    background: #2f74f4;
+    color: #ffffff;
+    border: none;
+    font-weight: 600;
+}
+
+QPushButton#primaryButton:hover {
+    background: #1a5fdf;
+}
+
+QPushButton#primaryButton:pressed {
+    background: #0f4fc4;
+}
+
+QPushButton#dangerButton {
+    color: #e64539;
+    border-color: #f5d6d4;
+}
+
+QPushButton#dangerButton:hover {
+    background: #fef2f1;
+    border-color: #e64539;
+}
+
+/* ---- 卡片 ---- */
+QWidget#card {
+    background: #ffffff;
+    border: 1px solid #e8edf5;
+    border-radius: 12px;
+    padding: 20px;
+}
+
+QWidget#card:hover {
+    border-color: #c8d6f0;
+    background: #fafcff;
+}
+
+QLabel#cardTitle {
+    font-size: 16px;
+    font-weight: 600;
+}
+
+QLabel#cardValue {
+    font-size: 28px;
+    font-weight: 700;
+    color: #2f74f4;
+}
+
+QLabel#cardDesc {
+    font-size: 12px;
+    color: #8b95a8;
+}
+
+/* ---- 首页欢迎区 ---- */
+QWidget#welcomeSection {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 #2f74f4, stop:1 #5b9cf5);
+    border-radius: 14px;
+    padding: 28px;
+}
+
+QLabel#welcomeTitle {
+    font-size: 22px;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+QLabel#welcomeSubtitle {
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.85);
+}
+
+/* ---- 空状态 ---- */
+QWidget#emptyState {
+    background: transparent;
+}
+
+QLabel#emptyStateIcon {
+    font-size: 48px;
+}
+
+QLabel#emptyStateTitle {
+    font-size: 18px;
+    font-weight: 600;
+    color: #1c2639;
+}
+
+QLabel#emptyStateText {
+    font-size: 13px;
+    color: #8b95a8;
+}
+
+/* ---- 错误状态 ---- */
+QWidget#errorState {
+    background: #fef8f7;
+    border: 1px solid #f5d6d4;
+    border-radius: 10px;
+    padding: 24px;
+}
+
+QLabel#errorStateIcon {
+    font-size: 40px;
+}
+
+QLabel#errorStateTitle {
+    font-size: 16px;
+    font-weight: 600;
+    color: #c0392b;
+}
+
+QLabel#errorStateText {
+    font-size: 13px;
+    color: #8b5e5b;
+}
+
+/* ---- 状态栏 ---- */
+QStatusBar {
+    background: #ffffff;
+    border-top: 1px solid #e1e8f5;
+    color: #697589;
+    font-size: 12px;
+    padding: 2px 12px;
+}
+
+/* ---- 滚动条 ---- */
+QScrollBar:vertical {
+    background: transparent;
+    width: 8px;
+    margin: 0;
+}
+
+QScrollBar::handle:vertical {
+    background: #d0d8e8;
+    border-radius: 4px;
+    min-height: 30px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #b0bcd0;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0;
+}
+
+QScrollBar:horizontal {
+    background: transparent;
+    height: 8px;
+}
+
+QScrollBar::handle:horizontal {
+    background: #d0d8e8;
+    border-radius: 4px;
+    min-width: 30px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background: #b0bcd0;
+}
+
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {
+    width: 0;
+}
+
+/* ---- 桌宠（DesktopPet）----
+   外观由 QPainter 绘制，背景透明，无需额外样式。 */
+
+/* ---- 桌宠弹出菜单 ---- */
+QQWidget#petPopup {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(200, 210, 230, 0.6);
+    border-radius: 14px;
+}
+
+QPushButton#petMenuButton {
+    min-height: 46px;      /* 42→46 按钮更高 */
+    font-size: 18px;       /* 16→18 字体更大 */
+    font-weight: 700;      /* 600→700 更粗 */
+    color: #000000;        /* #0d1525→纯黑 更清晰 */
+}
+QPushButton#petMenuButton:hover {
+    color: #1a5fdf;        /* 悬停色更深 */
+    font-weight: 700;      /* 保持粗体 */
+}
+
+/* ---- 输入框 ---- */
+QLineEdit {
+    min-height: 34px;
+    padding: 0 12px;
+    border: 1px solid #d8e1f0;
+    border-radius: 7px;
+    background: #ffffff;
+}
+
+QLineEdit:focus {
+    border-color: #2f74f4;
+}
+
+/* ---- 下拉框 ---- */
+QComboBox {
+    min-height: 34px;
+    padding: 0 10px;
+    border: 1px solid #d8e1f0;
+    border-radius: 7px;
+    background: #ffffff;
+}
+
+QComboBox:hover {
+    border-color: #2f74f4;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 28px;
+}
+
+/* ---- 复选框 ---- */
+QCheckBox {
+    spacing: 8px;
+}
+
+QCheckBox::indicator {
+    width: 18px;
+    height: 18px;
+    border: 1px solid #d0d8e8;
+    border-radius: 4px;
+    background: #ffffff;
+}
+
+QCheckBox::indicator:checked {
+    background: #2f74f4;
+    border-color: #2f74f4;
+}
+
+/* ---- 分割线 ---- */
+QWidget#divider {
+    background: #e8edf5;
+    max-height: 1px;
+}
+
+/* ---- 提示气泡 ---- */
+QWidget#tooltip {
+    background: #1c2639;
+    color: #ffffff;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 12px;
+}
