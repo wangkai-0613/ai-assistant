@@ -13,6 +13,7 @@ from typing import Any
 DEFAULT_SETTINGS: dict[str, Any] = {
     "city": "武汉",
     "openrouter_key": "",
+    "local_ai_dir": "",
     "voice_enabled": True,
     "auto_start": False,
     "cpu_monitor": False,

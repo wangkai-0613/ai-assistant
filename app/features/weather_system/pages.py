@@ -5,11 +5,13 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
+    QFileDialog,
     QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QProgressBar,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -93,7 +95,7 @@ class WeatherPage(QWidget):
 
         self.weather_label.setText("正在查询…")
         self.query_button.setEnabled(False)
-        fetcher = WeatherFetcher(city)
+        fetcher = WeatherFetcher(city, self.context.get_service("weather"))
         self._fetchers.append(fetcher)
 
         def cleanup() -> None:
@@ -164,6 +166,7 @@ class SettingsPage(QWidget):
         super().__init__(parent)
         self.context = context
         self.settings = context.get_service("settings")
+        self.local_ai = context.get_service("local_ai")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
@@ -172,6 +175,39 @@ class SettingsPage(QWidget):
         heading = QLabel("设置")
         heading.setObjectName("pageTitle")
         layout.addWidget(heading)
+
+        local_card = _Section("本地 AI（一键安装，无需 Ollama）")
+        local_layout = local_card.layout()
+        path_row = QHBoxLayout()
+        self.ai_path_input = QLineEdit(str(self.local_ai.install_dir))
+        self.ai_path_input.setPlaceholderText("选择模型保存位置，建议放在空间充足的磁盘")
+        self.ai_browse_button = QPushButton("选择位置")
+        path_row.addWidget(self.ai_path_input, 1)
+        path_row.addWidget(self.ai_browse_button)
+        local_layout.addLayout(path_row)
+
+        self.ai_status_label = QLabel("")
+        self.ai_status_label.setObjectName("mutedText")
+        self.ai_status_label.setWordWrap(True)
+        local_layout.addWidget(self.ai_status_label)
+
+        self.ai_progress = QProgressBar()
+        self.ai_progress.setRange(0, 100)
+        self.ai_progress.setValue(0)
+        self.ai_progress.setTextVisible(True)
+        local_layout.addWidget(self.ai_progress)
+
+        ai_buttons = QHBoxLayout()
+        self.ai_install_button = QPushButton("一键安装本地 AI")
+        self.ai_cancel_button = QPushButton("取消下载")
+        self.ai_cancel_button.setEnabled(False)
+        self.ai_start_button = QPushButton("启动本地 AI")
+        ai_buttons.addWidget(self.ai_install_button)
+        ai_buttons.addWidget(self.ai_cancel_button)
+        ai_buttons.addWidget(self.ai_start_button)
+        ai_buttons.addStretch(1)
+        local_layout.addLayout(ai_buttons)
+        layout.addWidget(local_card)
 
         card = _Section("偏好设置")
         form = QFormLayout()
@@ -191,20 +227,78 @@ class SettingsPage(QWidget):
         form.addRow("OpenRouter Key", self.key_input)
         form.addRow("", self.voice_check)
         form.addRow("", self.autostart_check)
-        self._card_layout = card.layout()
-        self._card_layout.addLayout(form)
+        card.layout().addLayout(form)
 
         self.save_button = QPushButton("保存设置")
-        self._card_layout.addWidget(self.save_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        card.layout().addWidget(self.save_button, alignment=Qt.AlignmentFlag.AlignLeft)
 
         self.status_label = QLabel("")
         self.status_label.setObjectName("mutedText")
-        self._card_layout.addWidget(self.status_label)
+        card.layout().addWidget(self.status_label)
 
         layout.addWidget(card)
         layout.addStretch(1)
 
         self.save_button.clicked.connect(self._on_save)
+        self.ai_browse_button.clicked.connect(self._choose_ai_path)
+        self.ai_install_button.clicked.connect(self._install_local_ai)
+        self.ai_cancel_button.clicked.connect(self.local_ai.cancel_install)
+        self.ai_start_button.clicked.connect(self._start_local_ai)
+        self.local_ai.progress.connect(self.ai_progress.setValue)
+        self.local_ai.status_changed.connect(self.ai_status_label.setText)
+        self.local_ai.install_finished.connect(self._on_ai_install_finished)
+        self._refresh_ai_status()
+
+    def _choose_ai_path(self) -> None:
+        path = QFileDialog.getExistingDirectory(
+            self, "选择本地 AI 保存位置", self.ai_path_input.text()
+        )
+        if path:
+            self.ai_path_input.setText(path)
+
+    def _install_local_ai(self) -> None:
+        try:
+            self.local_ai.set_install_dir(self.ai_path_input.text().strip())
+        except (OSError, RuntimeError, ValueError) as exc:
+            self.ai_status_label.setText(f"无法使用该位置：{exc}")
+            return
+        self.ai_progress.setValue(0)
+        self.ai_install_button.setEnabled(False)
+        self.ai_browse_button.setEnabled(False)
+        self.ai_cancel_button.setEnabled(True)
+        self.ai_status_label.setText("准备下载…")
+        self.local_ai.install()
+
+    def _on_ai_install_finished(self, success: bool, message: str) -> None:
+        self.ai_install_button.setEnabled(True)
+        self.ai_browse_button.setEnabled(True)
+        self.ai_cancel_button.setEnabled(False)
+        self.ai_status_label.setText(message)
+        if success:
+            self.context.events.settings_changed.emit()
+        self._refresh_ai_status(keep_message=not success)
+
+    def _start_local_ai(self) -> None:
+        if self.local_ai.start():
+            self.ai_status_label.setText("本地 AI 正在启动，请稍候…")
+            self.context.events.settings_changed.emit()
+        else:
+            self.ai_status_label.setText("请先点击“一键安装本地 AI”")
+
+    def _refresh_ai_status(self, keep_message: bool = False) -> None:
+        installed = self.local_ai.is_installed()
+        running = self.local_ai.is_running()
+        self.ai_start_button.setEnabled(installed and not running)
+        self.ai_install_button.setText("重新检查/继续安装" if installed else "一键安装本地 AI")
+        if not keep_message:
+            if running:
+                self.ai_status_label.setText("已安装并正在运行，可直接在 AI 助手页面使用")
+            elif installed:
+                self.ai_status_label.setText("已安装，点击“启动本地 AI”即可使用")
+            else:
+                self.ai_status_label.setText(
+                    "尚未安装。需要约 5GB 空间，模型从国内魔搭社区下载。"
+                )
 
     def _on_save(self) -> None:
         self.settings.set("city", self.city_input.text().strip() or "武汉")
@@ -213,7 +307,6 @@ class SettingsPage(QWidget):
         self.context.get_service("autostart").set_enabled(self.autostart_check.isChecked())
         self.context.events.settings_changed.emit()
         self.status_label.setText("已保存")
-
 
 def create_weather_page(context: AppContext) -> WeatherPage:
     return WeatherPage(context)

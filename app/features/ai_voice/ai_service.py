@@ -18,6 +18,7 @@ from .ai_client import (
     AIBackendError,
     AIRouter,
     ChatMessage,
+    LlamaCppBackend,
     OllamaBackend,
     OpenRouterBackend,
 )
@@ -26,6 +27,7 @@ from .task_parser import fallback_parse_task, looks_like_task_request
 
 _WEEKDAY_CN = "一二三四五六日"
 _JSON_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
+_MAX_HISTORY_MESSAGES = 12
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +41,7 @@ class AIResult:
 
 def _build_router(config: AIConfig) -> AIRouter:
     registry = {
+        "llamacpp": lambda: LlamaCppBackend(config.llama_host),
         "ollama": lambda: OllamaBackend(config.ollama_host, config.ollama_model),
         "openrouter": lambda: OpenRouterBackend(config.openrouter_api_key, config.openrouter_model),
     }
@@ -52,6 +55,7 @@ class AIService:
     def __init__(self, config: AIConfig | None = None):
         self.config = config or load_ai_config()
         self.router = _build_router(self.config)
+        self._history: list[ChatMessage] = []
 
     def handle_message(self, text: str, now: datetime | None = None) -> AIResult:
         text = (text or "").strip()
@@ -68,14 +72,15 @@ class AIService:
         if parsed.get("type") == "task":
             draft = self._draft_from_json(parsed)
             if draft is not None:
+                self._remember(text, content)
                 return AIResult(kind="task", draft=draft, source=source)
             return self._fallback(text, now, warning="模型返回的任务字段无法解析")
 
         reply = str(parsed.get("reply") or "").strip() or content.strip()
+        self._remember(text, content)
         return AIResult(kind="chat", reply=reply, source=source)
 
-    @staticmethod
-    def _build_messages(text: str, now: datetime) -> list[ChatMessage]:
+    def _build_messages(self, text: str, now: datetime) -> list[ChatMessage]:
         weekday = _WEEKDAY_CN[now.weekday()]
         system = (
             "你是桌面助手“小云”的任务解析器。"
@@ -88,8 +93,18 @@ class AIService:
         )
         return [
             ChatMessage(role="system", content=system),
+            *self._history,
             ChatMessage(role="user", content=text),
         ]
+
+    def _remember(self, user_text: str, assistant_text: str) -> None:
+        self._history.extend(
+            (
+                ChatMessage(role="user", content=user_text),
+                ChatMessage(role="assistant", content=assistant_text),
+            )
+        )
+        self._history = self._history[-_MAX_HISTORY_MESSAGES:]
 
     @staticmethod
     def _parse_model_json(content: str) -> dict:

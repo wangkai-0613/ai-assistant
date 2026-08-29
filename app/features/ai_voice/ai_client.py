@@ -47,7 +47,9 @@ class OllamaBackend(AIBackend):
             "stream": False,
         }
         try:
-            response = httpx.post(f"{self.host}/api/chat", json=payload, timeout=timeout)
+            response = httpx.post(
+                f"{self.host}/api/chat", json=payload, timeout=timeout, trust_env=False
+            )
             response.raise_for_status()
         except httpx.ConnectError as exc:
             raise AIBackendError(
@@ -70,6 +72,41 @@ class OllamaBackend(AIBackend):
             raise AIBackendError("本地模型返回空内容")
         return content
 
+
+class LlamaCppBackend(AIBackend):
+    """项目自带 llama.cpp 服务，使用 OpenAI 兼容接口。"""
+
+    name = "llamacpp"
+
+    def __init__(self, host: str):
+        self.host = host.rstrip("/")
+
+    def chat(self, messages: list[ChatMessage], timeout: float) -> str:
+        payload = {
+            "model": "local-model",
+            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "stream": False,
+        }
+        try:
+            response = httpx.post(
+                f"{self.host}/v1/chat/completions",
+                json=payload,
+                timeout=timeout,
+                trust_env=False,
+            )
+            response.raise_for_status()
+        except httpx.ConnectError as exc:
+            raise AIBackendError("内置本地 AI 尚未安装或启动") from exc
+        except httpx.TimeoutException as exc:
+            raise AIBackendError("内置本地 AI 响应超时") from exc
+        except httpx.HTTPStatusError as exc:
+            raise AIBackendError(f"内置本地 AI 返回错误：HTTP {exc.response.status_code}") from exc
+        except httpx.HTTPError as exc:
+            raise AIBackendError(f"内置本地 AI 请求失败：{exc}") from exc
+        try:
+            return response.json()["choices"][0]["message"]["content"]
+        except (ValueError, KeyError, IndexError) as exc:
+            raise AIBackendError("内置本地 AI 返回内容格式异常") from exc
 
 class OpenRouterBackend(AIBackend):
     """云端兜底：仅在本地模型不可用且配置了 API Key 时才会被调用。"""

@@ -7,7 +7,7 @@ import asyncio
 from PySide6.QtCore import QThread, Signal
 
 from app.core.contracts import WeatherSummary
-from app.features.weather_system.weather_service import WeatherError
+from app.features.weather_system.weather_service import WeatherError, WeatherService
 
 
 class WeatherFetcher(QThread):
@@ -16,15 +16,14 @@ class WeatherFetcher(QThread):
     done = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, city: str) -> None:
+    def __init__(self, city: str, service: WeatherService | None = None) -> None:
         super().__init__()
         self.city = city
+        self.service = service or WeatherService()
 
     def run(self) -> None:
-        from app.features.weather_system.weather_service import WeatherService
-
         try:
-            summary: WeatherSummary = asyncio.run(WeatherService().fetch(self.city))
+            summary: WeatherSummary = asyncio.run(self.service.fetch(self.city))
             self.done.emit(summary)
         except WeatherError as exc:
             self.failed.emit(str(exc))

@@ -33,6 +33,7 @@ def _load_dotenv_once() -> None:
 
 @dataclass(frozen=True, slots=True)
 class AIConfig:
+    llama_host: str
     ollama_host: str
     ollama_model: str
     openrouter_api_key: str
@@ -44,7 +45,7 @@ class AIConfig:
 def load_ai_config() -> AIConfig:
     _load_dotenv_once()
 
-    order_raw = os.environ.get("AI_BACKEND_ORDER", "ollama,openrouter")
+    order_raw = os.environ.get("AI_BACKEND_ORDER", "llamacpp,ollama,openrouter")
     backend_order = tuple(part.strip() for part in order_raw.split(",") if part.strip())
 
     try:
@@ -53,10 +54,11 @@ def load_ai_config() -> AIConfig:
         timeout = 20.0
 
     return AIConfig(
+        llama_host=os.environ.get("LLAMA_CPP_HOST", "http://127.0.0.1:11435"),
         ollama_host=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"),
         ollama_model=os.environ.get("OLLAMA_MODEL", "qwen2.5:7b-instruct"),
         openrouter_api_key=os.environ.get("OPENROUTER_API_KEY", ""),
         openrouter_model=os.environ.get("OPENROUTER_MODEL", ""),
-        backend_order=backend_order or ("ollama", "openrouter"),
+        backend_order=backend_order or ("llamacpp", "ollama", "openrouter"),
         request_timeout=timeout,
     )

@@ -9,6 +9,7 @@ AI 调用与语音识别都放到 QThread 里执行，避免卡住界面；用�
 from __future__ import annotations
 
 import threading
+from dataclasses import replace
 from datetime import datetime
 
 from PySide6.QtCore import QThread, Signal
@@ -30,9 +31,11 @@ from app.core.app_context import AppContext
 from app.core.contracts import TaskDraft
 
 from .ai_service import AIResult, AIService
+from .config import load_ai_config
 from .voice_input import VoiceInputUnavailable, VoiceRecognizer
 
 _SOURCE_LABEL = {
+    "llamacpp": "内置本地模型",
     "ollama": "本地模型",
     "openrouter": "云端 OpenRouter",
     "offline": "离线规则",
@@ -128,13 +131,14 @@ class ChatPage(QWidget):
     def __init__(self, context: AppContext, parent: QWidget | None = None):
         super().__init__(parent)
         self.context = context
-        self.service = AIService()
+        self.service = self._create_ai_service()
         self.recognizer = VoiceRecognizer()
         self._chat_thread: _ChatWorker | None = None
         self._voice_thread: _VoiceWorker | None = None
         app_instance = QApplication.instance()
         if app_instance is not None:
             app_instance.aboutToQuit.connect(self._on_about_to_quit)
+        context.events.settings_changed.connect(self._reload_ai_service)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(32, 32, 32, 32)
@@ -172,6 +176,29 @@ class ChatPage(QWidget):
 
         self._append_history("助手", "你好，我是小云。可以直接说需求，例如“明天下午三点提醒我交报告”。")
 
+    def _create_ai_service(self) -> AIService:
+        config = load_ai_config()
+        try:
+            saved_key = self.context.get_service("settings").get("openrouter_key", "")
+        except LookupError:
+            saved_key = ""
+        if saved_key:
+            config = replace(config, openrouter_api_key=saved_key)
+        try:
+            local_ai = self.context.get_service("local_ai")
+        except LookupError:
+            local_ai = None
+        if local_ai is not None and local_ai.is_installed():
+            order = ("llamacpp",) + tuple(
+                backend for backend in config.backend_order if backend != "llamacpp"
+            )
+            config = replace(config, backend_order=order)
+        return AIService(config)
+
+    def _reload_ai_service(self) -> None:
+        if self._chat_thread is None:
+            self.service = self._create_ai_service()
+            self.context.events.status_message.emit("AI 配置已更新")
     # ------------------------------------------------------------------ #
     # 文字对话 / 任务解析
     # ------------------------------------------------------------------ #

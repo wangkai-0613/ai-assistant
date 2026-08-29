@@ -6,7 +6,7 @@ PetPopup: 弹出菜单面板，包含功能快捷入口。
 
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QTimer, Qt, Signal
+from PySide6.QtCore import QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
