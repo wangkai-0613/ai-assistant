@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Protocol
 
 
@@ -30,6 +30,7 @@ class Course:
     start_time: str
     end_time: str = ""
     room: str = ""
+    course_date: date | None = None
 
     def __post_init__(self) -> None:
         if not 1 <= self.weekday <= 7:
@@ -63,6 +64,8 @@ class TaskServiceProtocol(Protocol):
 
 class CourseServiceProtocol(Protocol):
     def import_csv(self, path: str) -> int: ...
+
+    def import_file(self, path: str) -> int: ...
 
     def list_week(self) -> list[Course]: ...
 

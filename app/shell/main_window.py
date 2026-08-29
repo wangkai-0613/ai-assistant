@@ -61,7 +61,7 @@ class MainWindow(QMainWindow):
 
         self.pages = QStackedWidget()
 
-        home_page = HomePage(navigate_callback=self._navigate_to)
+        home_page = HomePage(navigate_callback=self._navigate_to, context=context)
         self.pages.addWidget(home_page)
 
         for title, owner in self.PAGE_SPECS[1:]:
@@ -72,6 +72,9 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
 
         self.navigation.currentRowChanged.connect(self.pages.setCurrentIndex)
+        self.navigation.currentRowChanged.connect(
+            lambda index: home_page.refresh_data() if index == 0 else None
+        )
         context.events.status_message.connect(self.statusBar().showMessage)
         self._load_stylesheet()
         self._setup_tray()

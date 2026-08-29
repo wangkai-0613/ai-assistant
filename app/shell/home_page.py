@@ -1,3 +1,5 @@
+from datetime import date, datetime
+
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
@@ -21,9 +23,11 @@ class HomePage(QWidget):
         "设置": 6,
     }
 
-    def __init__(self, navigate_callback, parent=None):
+    def __init__(self, navigate_callback, context=None, parent=None):
         super().__init__(parent)
         self._navigate = navigate_callback
+        self._context = context
+        self._value_labels: dict[str, QLabel] = {}
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -47,6 +51,13 @@ class HomePage(QWidget):
         outer.addWidget(scroll)
 
         self._setup_clock()
+        self.refresh_data()
+        if context is not None:
+            context.events.task_created.connect(lambda _task: self.refresh_data())
+            context.events.settings_changed.connect(self.refresh_data)
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.timeout.connect(self.refresh_data)
+        self._refresh_timer.start(10_000)
 
     def _build_welcome(self) -> QWidget:
         section = QWidget()
@@ -65,8 +76,6 @@ class HomePage(QWidget):
 
     def _setup_clock(self) -> None:
         def update():
-            from datetime import datetime
-
             now = datetime.now()
             weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
             text = (
@@ -134,10 +143,10 @@ class HomePage(QWidget):
         grid.setSpacing(16)
 
         card_data = [
-            ("📋", "待办任务", "3 项待完成", "查看详情"),
-            ("📅", "今日课程", "2 节课", "查看课表"),
-            ("🌤️", "今日天气", "晴 26°C", "查看详情"),
-            ("💻", "系统状态", "运行正常", "查看详情"),
+            ("📋", "待办任务", "正在读取…", "查看详情"),
+            ("📅", "今日课程", "正在读取…", "查看课表"),
+            ("🌤️", "今日天气", "正在读取…", "查看详情"),
+            ("💻", "系统状态", "正在读取…", "查看详情"),
         ]
 
         for i, (icon, title, value, action) in enumerate(card_data):
@@ -168,16 +177,71 @@ class HomePage(QWidget):
 
         value_label = QLabel(value)
         value_label.setObjectName("cardValue")
+        self._value_labels[title] = value_label
 
         action_label = QLabel(action)
         action_label.setObjectName("cardDesc")
         action_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        target = {"待办任务": 1, "今日课程": 2, "今日天气": 4, "系统状态": 5}.get(title)
+        if target is not None:
+            action_label.mousePressEvent = lambda _event, index=target: self._navigate(index)
 
         layout.addLayout(header)
         layout.addWidget(value_label)
         layout.addWidget(action_label)
         return card
 
+    def refresh_data(self) -> None:
+        """从各业务服务读取首页摘要；单个服务失败不影响其他卡片。"""
+        if self._context is None or not self._value_labels:
+            return
+
+        try:
+            tasks = self._context.get_service("task").list_all()
+            pending = sum(not task.completed for task in tasks)
+            self._value_labels["待办任务"].setText(f"{pending} 项待完成")
+        except (LookupError, OSError):
+            self._value_labels["待办任务"].setText("暂时无法读取")
+
+        try:
+            today = date.today()
+            courses = self._context.get_service("course").list_week(today)
+            count = sum(
+                course.course_date == today
+                if course.course_date is not None
+                else course.weekday == today.isoweekday()
+                for course in courses
+            )
+            self._value_labels["今日课程"].setText(f"{count} 节课")
+        except (LookupError, OSError):
+            self._value_labels["今日课程"].setText("暂时无法读取")
+
+        try:
+            settings = self._context.get_service("settings")
+            city = str(settings.get("city", "武汉"))
+            weather = self._context.get_service("weather").get_cached(city)
+            if weather is None:
+                self._value_labels["今日天气"].setText("暂无天气数据")
+            else:
+                temperature = f"{weather.temperature_c:g}°C"
+                self._value_labels["今日天气"].setText(
+                    f"{weather.description} {temperature}"
+                )
+        except (LookupError, OSError):
+            self._value_labels["今日天气"].setText("暂时无法读取")
+
+        try:
+            summary = self._context.get_service("system").snapshot()
+            cpu = "--" if summary.cpu_percent is None else f"{summary.cpu_percent:.0f}%"
+            self._value_labels["系统状态"].setText(
+                f"CPU {cpu} · 内存 {summary.memory_percent:.0f}%"
+            )
+        except (LookupError, OSError):
+            self._value_labels["系统状态"].setText("暂时无法读取")
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self.refresh_data()
     def _build_cat_section(self) -> QWidget:
         container = QWidget()
         container.setObjectName("card")

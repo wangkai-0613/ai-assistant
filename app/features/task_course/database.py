@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS courses (
     weekday INTEGER NOT NULL,
     start_time TEXT NOT NULL,
     end_time TEXT NOT NULL DEFAULT '',
-    room TEXT NOT NULL DEFAULT ''
+    room TEXT NOT NULL DEFAULT '',
+    course_date TEXT
 );
 """
 
@@ -41,4 +42,8 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(path or default_db_path())
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(courses)")}
+    if "course_date" not in columns:
+        conn.execute("ALTER TABLE courses ADD COLUMN course_date TEXT")
+        conn.commit()
     return conn

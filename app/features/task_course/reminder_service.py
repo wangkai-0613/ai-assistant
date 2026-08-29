@@ -90,7 +90,7 @@ class ReminderService(QObject):
     def collect_course_alerts(self, now: datetime) -> list[CourseAlert]:
         """返回需要课前提醒的课程，并记录已提醒避免重复。"""
         alerts: list[CourseAlert] = []
-        for course in self._context.get_service("course").list_week():
+        for course in self._context.get_service("course").list_week(now.date()):
             if course.weekday != now.isoweekday():
                 continue
             start_at = datetime.combine(now.date(), _parse_time(course.start_time))

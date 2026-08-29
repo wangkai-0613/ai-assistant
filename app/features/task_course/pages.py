@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -14,10 +14,13 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -180,10 +183,22 @@ class CoursePage(QWidget):
         super().__init__(parent)
         self.context = context
 
-        layout = QVBoxLayout(self)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(14)
-
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
+        scroll.setWidget(content)
+        outer_layout.addWidget(scroll)
         heading = QLabel("课表")
         heading.setObjectName("pageTitle")
         layout.addWidget(heading)
@@ -194,15 +209,18 @@ class CoursePage(QWidget):
         tomorrow_card.layout().addWidget(self.tomorrow_label)
         layout.addWidget(tomorrow_card)
 
-        week_card = _Section("一周课表")
+        week_card = _Section("本周课表")
         week_layout = week_card.layout()
 
         toolbar = QHBoxLayout()
-        self.import_button = QPushButton("导入 CSV")
+        self.import_button = QPushButton("导入课表")
         toolbar.addWidget(self.import_button)
         toolbar.addStretch(1)
         week_layout.addLayout(toolbar)
 
+        self.week_range_label = QLabel("")
+        self.week_range_label.setObjectName("mutedText")
+        week_layout.addWidget(self.week_range_label)
         self.grid = QGridLayout()
         self.grid.setSpacing(8)
         week_layout.addLayout(self.grid)
@@ -210,41 +228,87 @@ class CoursePage(QWidget):
         self.status_label = QLabel("")
         self.status_label.setObjectName("mutedText")
         week_layout.addWidget(self.status_label)
+        layout.addWidget(week_card)
 
-        layout.addWidget(week_card, 1)
-
+        next_week_card = _Section("下一周课表")
+        next_week_layout = next_week_card.layout()
+        self.next_week_range_label = QLabel("")
+        self.next_week_range_label.setObjectName("mutedText")
+        next_week_layout.addWidget(self.next_week_range_label)
+        self.next_week_grid = QGridLayout()
+        self.next_week_grid.setSpacing(8)
+        next_week_layout.addLayout(self.next_week_grid)
+        layout.addWidget(next_week_card)
         self.import_button.clicked.connect(self._on_import)
         self.refresh()
 
     def refresh(self) -> None:
         service = self.context.get_service("course")
+        today = date.today()
 
-        tomorrow = service.list_tomorrow()
+        tomorrow = service.list_tomorrow(today)
         if tomorrow:
             lines = [
-                f"{c.start_time} {c.name}" + (f"（{c.room}）" if c.room else "")
-                for c in tomorrow
+                f"{course.start_time} {course.name}"
+                + (f"（{course.room}）" if course.room else "")
+                for course in tomorrow
             ]
             self.tomorrow_label.setText("　｜　".join(lines))
         else:
             self.tomorrow_label.setText("明天没有课程安排")
 
-        while self.grid.count():
-            widget = self.grid.takeAt(0).widget()
+        self._populate_week(
+            self.grid,
+            self.week_range_label,
+            service.list_week(today),
+            today,
+        )
+        next_week = today + timedelta(days=7)
+        self._populate_week(
+            self.next_week_grid,
+            self.next_week_range_label,
+            service.list_week(next_week),
+            next_week,
+        )
+
+    def _populate_week(self, grid, range_label, courses, reference: date) -> None:
+        while grid.count():
+            widget = grid.takeAt(0).widget()
             if widget is not None:
                 widget.deleteLater()
+
+        week_start = reference - timedelta(days=reference.weekday())
+        week_end = week_start + timedelta(days=6)
+        range_label.setText(f"{week_start:%Y-%m-%d} — {week_end:%Y-%m-%d}")
+
+        courses_by_day = {weekday: [] for weekday in range(1, 8)}
+        for course in courses:
+            courses_by_day[course.weekday].append(course)
+
         for index, name in enumerate(WEEKDAY_NAMES):
-            day_label = QLabel(name)
+            day = week_start + timedelta(days=index)
+            day_label = QLabel(f"{name}\n{day:%m-%d}")
             day_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             day_label.setObjectName("sectionTitle")
-            self.grid.addWidget(day_label, 0, index)
-        for course in service.list_week():
-            cell = QLabel(self._format_course(course))
-            cell.setWordWrap(True)
-            cell.setAlignment(Qt.AlignmentFlag.AlignTop)
-            cell.setObjectName("courseCell")
-            self.grid.addWidget(cell, self._row_for(course), course.weekday - 1)
+            day_label.setMinimumWidth(125)
+            grid.setColumnStretch(index, 1)
+            grid.addWidget(day_label, 0, index)
 
+            day_courses = courses_by_day[index + 1]
+            if not day_courses:
+                empty = QLabel("无课")
+                empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                empty.setObjectName("mutedText")
+                grid.addWidget(empty, 1, index)
+                continue
+            for row, course in enumerate(day_courses, start=1):
+                cell = QLabel(self._format_course(course))
+                cell.setWordWrap(True)
+                cell.setAlignment(Qt.AlignmentFlag.AlignTop)
+                cell.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+                cell.setMinimumHeight(96)
+                cell.setObjectName("courseCell")
+                grid.addWidget(cell, row, index)
     @staticmethod
     def _format_course(course) -> str:
         span = course.start_time
@@ -255,21 +319,18 @@ class CoursePage(QWidget):
             text += f"\n{course.room}"
         return text
 
-    def _row_for(self, course) -> int:
-        # 同一星期多门课依次向下排，避免重叠
-        service = self.context.get_service("course")
-        same_day = [c for c in service.list_week() if c.weekday == course.weekday]
-        return same_day.index(course) + 1
-
     def _on_import(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "选择课表 CSV", "", "CSV 文件 (*.csv)"
+            self,
+            "选择课表文件",
+            "",
+            "课表文件 (*.xlsx *.csv);;Excel 工作簿 (*.xlsx);;CSV 文件 (*.csv)",
         )
         if not path:
             return
         try:
-            count = self.context.get_service("course").import_csv(path)
-        except OSError as exc:
+            count = self.context.get_service("course").import_file(path)
+        except (OSError, ValueError) as exc:
             message = f"导入失败：{exc}"
             self.status_label.setText(message)
             self.context.events.status_message.emit(message)

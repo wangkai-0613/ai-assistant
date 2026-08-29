@@ -1,5 +1,7 @@
 from datetime import date
 
+from openpyxl import Workbook
+
 from app.features.task_course.course_service import CourseService
 
 _HEADER = "weekday,start_time,end_time,name,room\n"
@@ -106,3 +108,51 @@ def test_list_tomorrow_filters_by_weekday(tmp_path) -> None:
     assert [c.name for c in service.list_tomorrow(date(2026, 8, 24))] == ["周二课"]
     # 2026-08-26 是周三，明天周四，无课
     assert service.list_tomorrow(date(2026, 8, 26)) == []
+
+
+def test_import_xlsx_week_blocks_with_specific_dates(tmp_path) -> None:
+    path = tmp_path / "courses.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["第1周", "节次：1-2", "节次：3-4"])
+    sheet.append(
+        [
+            "2026-08-31 至 2026-09-06",
+            "课程名称：电机学（下）",
+            "课程名称：微控制器原理及应用",
+        ]
+    )
+    sheet.append([None, "上课教室：西十二楼S303", "上课教室：西十二楼N101"])
+    sheet.append(["第2周", "节次：3-4"])
+    sheet.append(["2026-09-07 至 2026-09-13", "课程名称：自动控制理论"])
+    sheet.append([None, "上课教室：西十二楼N310"])
+    workbook.save(path)
+
+    service = CourseService(db_path=tmp_path / "db.sqlite")
+
+    assert service.import_file(str(path)) == 3
+    first_week = service.list_week(date(2026, 8, 31))
+    assert [course.name for course in first_week] == [
+        "电机学（下）",
+        "微控制器原理及应用",
+    ]
+    assert first_week[0].course_date == date(2026, 8, 31)
+    assert first_week[0].start_time == "08:00"
+    assert first_week[0].room == "西十二楼S303"
+    assert [course.name for course in service.list_week(date(2026, 9, 7))] == [
+        "自动控制理论"
+    ]
+    assert [course.name for course in service.list_tomorrow(date(2026, 8, 30))] == [
+        "电机学（下）"
+    ]
+
+
+def test_import_file_rejects_unknown_extension(tmp_path) -> None:
+    service = CourseService(db_path=tmp_path / "db.sqlite")
+
+    try:
+        service.import_file(str(tmp_path / "courses.xls"))
+    except ValueError as exc:
+        assert "CSV 或 XLSX" in str(exc)
+    else:
+        raise AssertionError("应拒绝不支持的文件类型")
