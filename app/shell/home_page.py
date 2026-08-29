@@ -69,7 +69,10 @@ class HomePage(QWidget):
 
             now = datetime.now()
             weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-            text = f"{now:%Y年%m月%d日} {weekday_names[now.weekday()]} {now:%H:%M}"
+            text = (
+                f"{now:%Y}年{now:%m}月{now:%d}日 "
+                f"{weekday_names[now.weekday()]} {now:%H:%M}"
+            )
             self._time_label.setText(text)
 
         update()
