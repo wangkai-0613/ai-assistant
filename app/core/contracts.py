@@ -38,6 +38,15 @@ class Course:
 
 
 @dataclass(frozen=True, slots=True)
+class WeatherForecastDay:
+    date: date
+    description: str
+    temperature_max_c: float
+    temperature_min_c: float
+    rain_probability: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class WeatherSummary:
     city: str
     temperature_c: float

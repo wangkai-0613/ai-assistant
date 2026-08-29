@@ -10,14 +10,17 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 import httpx
 
-from app.core.contracts import WeatherSummary
+from app.core.contracts import WeatherForecastDay, WeatherSummary
 
 WTTR_URL = "https://wttr.in/{city}?format=j1"
+GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
+FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 TIMEOUT_SECONDS = 10.0
 CACHE_TTL_SECONDS = 1800  # 30 分钟
 _CACHE_FILENAME = "weather_cache.json"
@@ -25,6 +28,28 @@ _CACHE_FILENAME = "weather_cache.json"
 
 class WeatherError(Exception):
     """天气查询失败。"""
+
+
+
+
+def _weather_code_text(code: int) -> str:
+    if code == 0:
+        return "晴"
+    if code in {1, 2}:
+        return "多云"
+    if code == 3:
+        return "阴"
+    if code in {45, 48}:
+        return "有雾"
+    if code in {51, 53, 55, 56, 57}:
+        return "毛毛雨"
+    if code in {61, 63, 65, 66, 67, 80, 81, 82}:
+        return "有雨"
+    if code in {71, 73, 75, 77, 85, 86}:
+        return "有雪"
+    if code in {95, 96, 99}:
+        return "雷雨"
+    return "天气变化"
 
 
 def _cache_path() -> Path:
@@ -92,6 +117,168 @@ class WeatherService:
     def get_cached(self, city: str) -> WeatherSummary | None:
         """读取缓存（不校验时效），供断网或展示上次结果使用。"""
         return self._any_cached(city)
+
+    def get_weekly_cached(self, city: str) -> tuple[str, list[WeatherForecastDay]] | None:
+        """读取七日预报缓存，不校验时效，断网时仍可展示。"""
+        entry = self._cache.get(f"{city}::weekly")
+        if not entry or not isinstance(entry.get("days"), list):
+            return None
+        try:
+            days = [
+                WeatherForecastDay(
+                    date=date.fromisoformat(item["date"]),
+                    description=item["description"],
+                    temperature_max_c=float(item["temperature_max_c"]),
+                    temperature_min_c=float(item["temperature_min_c"]),
+                    rain_probability=item.get("rain_probability"),
+                )
+                for item in entry["days"]
+            ]
+            return str(entry["city"]), days
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    async def fetch_weekly(self, city: str) -> tuple[str, list[WeatherForecastDay]]:
+        """通过 Open-Meteo 查询未来七天预报。"""
+        cache_key = f"{city}::weekly"
+        cached_entry = self._cache.get(cache_key)
+        cached = self.get_weekly_cached(city)
+        if cached is not None and cached_entry is not None:
+            age = time.time() - cached_entry.get("fetched_at", 0)
+            if age <= CACHE_TTL_SECONDS:
+                return cached
+
+        try:
+            async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
+                geo_response = await client.get(
+                    GEOCODING_URL,
+                    params={"name": city, "count": 1, "language": "zh", "format": "json"},
+                )
+                geo_response.raise_for_status()
+                locations = geo_response.json().get("results", [])
+                if not locations:
+                    raise WeatherError(f"没有找到城市：{city}")
+                location = locations[0]
+                forecast_response = await client.get(
+                    FORECAST_URL,
+                    params={
+                        "latitude": location["latitude"],
+                        "longitude": location["longitude"],
+                        "daily": (
+                            "weather_code,temperature_2m_max,temperature_2m_min,"
+                            "precipitation_probability_max"
+                        ),
+                        "timezone": "auto",
+                        "forecast_days": 7,
+                    },
+                )
+                forecast_response.raise_for_status()
+                daily = forecast_response.json()["daily"]
+        except httpx.HTTPError as exc:
+            if cached is not None:
+                return cached
+            raise WeatherError(f"无法连接七日天气服务：{exc}") from exc
+        except (KeyError, TypeError, ValueError) as exc:
+            if cached is not None:
+                return cached
+            raise WeatherError("七日天气服务返回了无法解析的数据") from exc
+
+        try:
+            days = [
+                WeatherForecastDay(
+                    date=date.fromisoformat(raw_date),
+                    description=_weather_code_text(int(code)),
+                    temperature_max_c=float(maximum),
+                    temperature_min_c=float(minimum),
+                    rain_probability=int(rain) if rain is not None else None,
+                )
+                for raw_date, code, maximum, minimum, rain in zip(
+                    daily["time"],
+                    daily["weather_code"],
+                    daily["temperature_2m_max"],
+                    daily["temperature_2m_min"],
+                    daily["precipitation_probability_max"],
+                    strict=True,
+                )
+            ]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise WeatherError("七日天气数据缺少必要字段") from exc
+        if len(days) != 7:
+            raise WeatherError("天气服务未返回完整的七日预报")
+
+        resolved_city = str(location.get("name") or city)
+        self._cache[cache_key] = {
+            "city": resolved_city,
+            "days": [
+                {
+                    "date": item.date.isoformat(),
+                    "description": item.description,
+                    "temperature_max_c": item.temperature_max_c,
+                    "temperature_min_c": item.temperature_min_c,
+                    "rain_probability": item.rain_probability,
+                }
+                for item in days
+            ],
+            "fetched_at": time.time(),
+        }
+        self._save_cache()
+        return resolved_city, days
+
+    def get_tomorrow_cached(self, city: str) -> WeatherSummary | None:
+        """读取最近一次明日预报缓存，供晚间提醒断网回退。"""
+        return self._any_cached(f"{city}::tomorrow")
+
+    async def fetch_tomorrow(self, city: str) -> WeatherSummary:
+        """查询明日天气预报，并独立缓存，避免与当前天气混淆。"""
+        cache_key = f"{city}::tomorrow"
+        cached = self._cached_summary(cache_key)
+        if cached is not None:
+            return cached
+
+        url = WTTR_URL.format(city=city)
+        try:
+            async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                data = response.json()
+        except httpx.HTTPError as exc:
+            stale = self._any_cached(cache_key)
+            if stale is not None:
+                return stale
+            raise WeatherError(f"无法连接天气服务：{exc}") from exc
+        except ValueError as exc:
+            raise WeatherError("天气服务返回了无法解析的数据") from exc
+
+        try:
+            tomorrow = data["weather"][1]
+            hourly = tomorrow.get("hourly", [])
+            rain_values = [int(item.get("chanceofrain", 0)) for item in hourly]
+            descriptions = [
+                item["weatherDesc"][0]["value"]
+                for item in hourly
+                if item.get("weatherDesc")
+            ]
+            city_name = data["nearest_area"][0]["areaName"][0]["value"]
+            summary = WeatherSummary(
+                city=city_name,
+                temperature_c=float(tomorrow["avgtempC"]),
+                description=(
+                    descriptions[len(descriptions) // 2] if descriptions else "暂无描述"
+                ),
+                rain_probability=max(rain_values) if rain_values else None,
+            )
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise WeatherError("天气服务返回的数据缺少明日预报") from exc
+
+        self._cache[cache_key] = {
+            "city": summary.city,
+            "temperature_c": summary.temperature_c,
+            "description": summary.description,
+            "rain_probability": summary.rain_probability,
+            "fetched_at": time.time(),
+        }
+        self._save_cache()
+        return summary
 
     async def fetch(self, city: str) -> WeatherSummary:
         cached = self._cached_summary(city)

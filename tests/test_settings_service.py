@@ -9,6 +9,7 @@ def test_defaults_when_file_missing(tmp_path) -> None:
     service = SettingsService(path=tmp_path / "missing.json")
     assert service.get("city") == "武汉"
     assert service.get("voice_enabled") is True
+    assert service.get("theme") == "dark"
 
 
 def test_set_and_reload(tmp_path) -> None:
@@ -16,10 +17,12 @@ def test_set_and_reload(tmp_path) -> None:
     service = SettingsService(path=path)
     service.set("city", "上海")
     service.set("voice_enabled", False)
+    service.set("theme", "light")
 
     reloaded = SettingsService(path=path)
     assert reloaded.get("city") == "上海"
     assert reloaded.get("voice_enabled") is False
+    assert reloaded.get("theme") == "light"
 
 
 def test_save_writes_json_file(tmp_path) -> None:

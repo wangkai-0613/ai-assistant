@@ -14,9 +14,11 @@ from PySide6.QtGui import (
     QPainter,
     QPainterPath,
     QPen,
+    QPixmap,
 )
 from PySide6.QtWidgets import (
     QApplication,
+    QLabel,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -62,11 +64,15 @@ class PetPopup(QWidget):
 
         self._load_stylesheet()
 
-    def _load_stylesheet(self):
-        style_path = Path(__file__).resolve().parents[1] / "resources" / "style.qss"
-        if style_path.exists():
-            self.setStyleSheet(style_path.read_text(encoding="utf-8"))
+    def _load_stylesheet(self, theme: str = "dark") -> None:
+        self.apply_theme(theme)
 
+    def apply_theme(self, theme: str) -> None:
+        selected = theme if theme in {"dark", "light"} else "dark"
+        style_path = (
+            Path(__file__).resolve().parents[1] / "resources" / f"style_{selected}.qss"
+        )
+        self.setStyleSheet(style_path.read_text(encoding="utf-8") if style_path.exists() else "")
     def _on_click(self, index: int):
         self.navigate.emit(index)
         self.hide()
@@ -79,6 +85,60 @@ class PetPopup(QWidget):
     def leaveEvent(self, event):
         self._owner._schedule_hide()
         super().leaveEvent(event)
+
+class TaskReminderPopup(QWidget):
+    """显示在桌宠上方的轻量任务提醒框。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("taskReminderPopup")
+        self.setFixedWidth(280)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 12)
+        self.message_label = QLabel()
+        self.message_label.setObjectName("taskReminderText")
+        self.message_label.setWordWrap(True)
+        layout.addWidget(self.message_label)
+
+        self._close_timer = QTimer(self)
+        self._close_timer.setSingleShot(True)
+        self._close_timer.timeout.connect(self.hide)
+
+    def apply_theme(self, theme: str) -> None:
+        selected = theme if theme in {"dark", "light"} else "dark"
+        style_path = (
+            Path(__file__).resolve().parents[1] / "resources" / f"style_{selected}.qss"
+        )
+        self.setStyleSheet(
+            style_path.read_text(encoding="utf-8") if style_path.exists() else ""
+        )
+
+    def show_message(self, task_title: str, phase: str) -> None:
+        if phase == "early":
+            detail = "还有 30 分钟截止，请注意时间"
+        else:
+            detail = "截止时间已到，请及时处理"
+        self.show_text(f"任务：{task_title}\n{detail}")
+
+    def show_text(self, text: str, duration_ms: int = 15000) -> None:
+        self.message_label.setText(text)
+        self.adjustSize()
+        self.show()
+        self.raise_()
+        self._close_timer.start(duration_ms)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        self.hide()
+        super().mousePressEvent(event)
+
 
 class DesktopPet(QWidget):
     clicked = Signal()
@@ -96,8 +156,11 @@ class DesktopPet(QWidget):
             | Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        mascot_path = Path(__file__).resolve().parents[1] / "resources" / "cat_mascot.png"
+        self._mascot_pixmap = QPixmap(str(mascot_path))
 
         self._popup = PetPopup(owner=self)
+        self._reminder_popup = TaskReminderPopup()
         self._popup_visible = False
 
         self._hide_timer = QTimer(self)
@@ -106,10 +169,62 @@ class DesktopPet(QWidget):
 
         self._drag_pos: QPoint | None = None
         self._dragging = False
+        self._initial_position_set = False
 
+    def apply_theme(self, theme: str) -> None:
+        self._popup.apply_theme(theme)
+        self._reminder_popup.apply_theme(theme)
     @property
     def popup(self):
         return self._popup
+
+    @property
+    def reminder_popup(self):
+        return self._reminder_popup
+
+    def show_task_reminder(self, task, phase: str) -> None:
+        self._reminder_popup.show_message(task.title, phase)
+        self._position_reminder_popup()
+
+    def show_daily_summary(self, message: str) -> None:
+        self._reminder_popup.show_text(message, duration_ms=30000)
+        self._position_reminder_popup()
+
+    def showEvent(self, event) -> None:
+        if not self._initial_position_set:
+            screen = self.screen() or QApplication.primaryScreen()
+            if screen is not None:
+                available = screen.availableGeometry()
+                margin = 24
+                self.move(
+                    available.x() + available.width() - self.width() - margin,
+                    available.y() + available.height() - self.height() - margin,
+                )
+            self._initial_position_set = True
+        super().showEvent(event)
+
+    def moveEvent(self, event) -> None:
+        if self._reminder_popup.isVisible():
+            self._position_reminder_popup()
+        super().moveEvent(event)
+
+    def _position_reminder_popup(self) -> None:
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        pet_top_left = self.mapToGlobal(QPoint(0, 0))
+        popup = self._reminder_popup
+        gap = 12
+        popup_x = pet_top_left.x() + (self.width() - popup.width()) // 2
+        popup_y = pet_top_left.y() - popup.height() - gap
+        popup_x = max(
+            available.left() + gap,
+            min(popup_x, available.right() - popup.width() - gap + 1),
+        )
+        if popup_y < available.top() + gap:
+            popup_y = pet_top_left.y() + self.height() + gap
+        popup.move(popup_x, popup_y)
 
     def _cancel_hide(self):
         self._hide_timer.stop()
@@ -129,6 +244,18 @@ class DesktopPet(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
+        if not self._mascot_pixmap.isNull():
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+            scaled = self._mascot_pixmap.scaled(
+                self.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            x = (self.width() - scaled.width()) // 2
+            y = (self.height() - scaled.height()) // 2
+            painter.drawPixmap(x, y, scaled)
+            painter.end()
+            return
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         s = self._PET_SIZE
         m = 4

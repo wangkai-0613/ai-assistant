@@ -15,8 +15,35 @@ from app.features.weather_system.weather_service import (
 def _wttr_payload() -> dict:
     return {
         "current_condition": [{"temp_C": "25", "weatherDesc": [{"value": "Sunny"}]}],
-        "weather": [{"hourly": [{"chanceofrain": "10"}, {"chanceofrain": "60"}]}],
+        "weather": [
+            {"hourly": [{"chanceofrain": "10"}, {"chanceofrain": "60"}]},
+            {
+                "avgtempC": "21",
+                "hourly": [
+                    {
+                        "chanceofrain": "20",
+                        "weatherDesc": [{"value": "Cloudy"}],
+                    },
+                    {
+                        "chanceofrain": "80",
+                        "weatherDesc": [{"value": "Rain"}],
+                    },
+                ],
+            },
+        ],
         "nearest_area": [{"areaName": [{"value": "Beijing"}]}],
+    }
+
+
+def _open_meteo_daily_payload() -> dict:
+    return {
+        "daily": {
+            "time": [f"2026-09-{day:02d}" for day in range(1, 8)],
+            "weather_code": [0, 1, 3, 61, 80, 95, 2],
+            "temperature_2m_max": [30, 29, 28, 27, 26, 25, 29],
+            "temperature_2m_min": [20, 20, 19, 18, 18, 17, 19],
+            "precipitation_probability_max": [0, 10, 20, 70, 80, 90, 15],
+        }
     }
 
 
@@ -57,6 +84,42 @@ def test_fetch_parses_and_caches(mock_client, tmp_path) -> None:
     assert summary.description == "Sunny"
     assert summary.rain_probability == 60
     assert (tmp_path / "cache.json").exists()
+
+
+@patch("app.features.weather_system.weather_service.httpx.AsyncClient")
+def test_fetch_weekly_returns_seven_days(mock_client, tmp_path) -> None:
+    geo_response = _fake_response(
+        {"results": [{"name": "武汉", "latitude": 30.59, "longitude": 114.3}]}
+    )
+    forecast_response = _fake_response(_open_meteo_daily_payload())
+    mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+        side_effect=[geo_response, forecast_response]
+    )
+    service = WeatherService(cache_path=tmp_path / "cache.json")
+
+    city, days = asyncio.run(service.fetch_weekly("武汉"))
+
+    assert city == "武汉"
+    assert len(days) == 7
+    assert days[0].description == "晴"
+    assert days[3].description == "有雨"
+    assert days[3].rain_probability == 70
+    assert service.get_weekly_cached("武汉") == (city, days)
+
+
+@patch("app.features.weather_system.weather_service.httpx.AsyncClient")
+def test_fetch_tomorrow_uses_second_forecast_day(mock_client, tmp_path) -> None:
+    mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+        return_value=_fake_response(_wttr_payload())
+    )
+    service = WeatherService(cache_path=tmp_path / "cache.json")
+
+    summary = asyncio.run(service.fetch_tomorrow("Beijing"))
+
+    assert summary.temperature_c == 21.0
+    assert summary.description == "Rain"
+    assert summary.rain_probability == 80
+    assert service.get_tomorrow_cached("Beijing") == summary
 
 
 @patch("app.features.weather_system.weather_service.httpx.AsyncClient")

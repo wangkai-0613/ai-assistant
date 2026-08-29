@@ -7,7 +7,7 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 from app.core.app_context import AppContext
-from app.core.contracts import TaskDraft
+from app.core.contracts import TaskDraft, WeatherSummary
 from app.core.events import AppEvents
 from app.features.task_course.course_service import CourseService
 from app.features.task_course.reminder_service import ReminderService
@@ -28,6 +28,16 @@ class _FakeSettings:
         return default
 
 
+class _FakeWeather:
+    def get_tomorrow_cached(self, _city: str) -> WeatherSummary:
+        return WeatherSummary(
+            city="武汉",
+            temperature_c=20,
+            description="中雨",
+            rain_probability=80,
+        )
+
+
 @pytest.fixture(scope="module")
 def qapp():
     app = QApplication.instance() or QApplication([])
@@ -46,7 +56,79 @@ def _build_context(tmp_path, voice_enabled: bool = False) -> AppContext:
     course_service.import_csv(str(csv_path))
     context.register_service("course", course_service)
     context.register_service("settings", _FakeSettings(voice_enabled))
+    context.register_service("weather", _FakeWeather())
     return context
+
+
+def test_daily_summary_starts_at_2240_and_only_once_per_day(tmp_path) -> None:
+    context = _build_context(tmp_path)
+    received: list[str] = []
+    context.events.daily_summary.connect(received.append)
+    reminder = ReminderService(context)
+
+    reminder._maybe_show_daily_summary(datetime(2026, 8, 25, 22, 39))
+    assert received == []
+
+    reminder._maybe_show_daily_summary(datetime(2026, 8, 25, 22, 40))
+    assert len(received) == 1
+    assert "明日课程" in received[0]
+    assert "10:00 高等数学（N101）" in received[0]
+    assert "明日天气：中雨" in received[0]
+    assert "记得带伞" in received[0]
+
+    reminder._maybe_show_daily_summary(datetime(2026, 8, 25, 23, 0))
+    assert len(received) == 1
+
+
+def test_daily_summary_does_not_suggest_umbrella_for_low_rain(tmp_path) -> None:
+    context = _build_context(tmp_path)
+    received: list[str] = []
+    context.events.daily_summary.connect(received.append)
+    reminder = ReminderService(context)
+
+    reminder._emit_daily_summary(
+        [],
+        WeatherSummary(
+            city="武汉",
+            temperature_c=25,
+            description="晴",
+            rain_probability=20,
+        ),
+    )
+
+    assert "明天没有课程安排" in received[0]
+    assert "记得带伞" not in received[0]
+
+
+def test_task_alerts_fire_30_minutes_before_and_at_deadline(tmp_path) -> None:
+    context = _build_context(tmp_path)
+    task = context.get_service("task").create(
+        TaskDraft(title="交报告", due_at=datetime(2026, 8, 26, 10, 0))
+    )
+    reminder = ReminderService(context)
+
+    early = reminder.collect_task_alerts(datetime(2026, 8, 26, 9, 30))
+    assert early == [(task, "early")]
+    assert reminder.collect_task_alerts(datetime(2026, 8, 26, 9, 45)) == []
+
+    due = reminder.collect_task_alerts(datetime(2026, 8, 26, 10, 0))
+    assert due == [(task, "due")]
+    assert reminder.collect_task_alerts(datetime(2026, 8, 26, 10, 1)) == []
+
+
+def test_task_alert_ignores_completed_and_too_early_tasks(tmp_path) -> None:
+    context = _build_context(tmp_path)
+    task_service = context.get_service("task")
+    completed = task_service.create(
+        TaskDraft(title="已完成", due_at=datetime(2026, 8, 26, 10, 0))
+    )
+    task_service.complete(completed.id)
+    task_service.create(
+        TaskDraft(title="还很早", due_at=datetime(2026, 8, 26, 10, 1))
+    )
+    reminder = ReminderService(context)
+
+    assert reminder.collect_task_alerts(datetime(2026, 8, 26, 9, 30)) == []
 
 
 def test_course_alert_within_lead_window(tmp_path) -> None:

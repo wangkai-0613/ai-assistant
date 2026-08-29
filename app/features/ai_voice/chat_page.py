@@ -11,8 +11,10 @@ from __future__ import annotations
 import threading
 from dataclasses import replace
 from datetime import datetime
+from pathlib import Path
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -22,7 +24,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
-    QTextEdit,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -150,8 +152,19 @@ class ChatPage(QWidget):
         layout.addWidget(heading)
         layout.addWidget(subtitle)
 
-        self.history = QTextEdit()
-        self.history.setReadOnly(True)
+        self.history = QScrollArea()
+        self.history.setObjectName("chatHistory")
+        self.history.setWidgetResizable(True)
+        self.history.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._chat_canvas = QWidget()
+        self._chat_canvas.setObjectName("chatCanvas")
+        self._chat_layout = QVBoxLayout(self._chat_canvas)
+        self._chat_layout.setContentsMargins(16, 16, 16, 16)
+        self._chat_layout.setSpacing(14)
+        self._chat_layout.addStretch(1)
+        self.history.setWidget(self._chat_canvas)
         layout.addWidget(self.history, 1)
 
         input_row = QHBoxLayout()
@@ -244,8 +257,50 @@ class ChatPage(QWidget):
             self._append_history("助手", "已取消创建任务。")
 
     def _append_history(self, speaker: str, text: str) -> None:
-        safe_text = text.replace("<", "&lt;").replace(">", "&gt;")
-        self.history.append(f"<b>{speaker}：</b>{safe_text}")
+        row = QWidget()
+        row.setObjectName("chatMessageRow")
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(10)
+
+        bubble = QLabel(text)
+        bubble.setWordWrap(True)
+        bubble.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        bubble.setMaximumWidth(620)
+
+        if speaker == "助手":
+            avatar = QLabel()
+            avatar.setObjectName("aiAvatar")
+            avatar.setFixedSize(46, 46)
+            avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            mascot_path = (
+                Path(__file__).resolve().parents[2] / "resources" / "cat_mascot.png"
+            )
+            pixmap = QPixmap(str(mascot_path))
+            if not pixmap.isNull():
+                avatar.setPixmap(
+                    pixmap.scaled(
+                        38,
+                        38,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                )
+            bubble.setObjectName("aiMessageBubble")
+            row_layout.addWidget(avatar, 0, Qt.AlignmentFlag.AlignTop)
+            row_layout.addWidget(bubble, 0, Qt.AlignmentFlag.AlignTop)
+            row_layout.addStretch(1)
+        else:
+            bubble.setObjectName("userMessageBubble")
+            row_layout.addStretch(1)
+            row_layout.addWidget(bubble, 0, Qt.AlignmentFlag.AlignTop)
+
+        self._chat_layout.insertWidget(self._chat_layout.count() - 1, row)
+        QTimer.singleShot(0, self._scroll_history_to_bottom)
+
+    def _scroll_history_to_bottom(self) -> None:
+        scroll_bar = self.history.verticalScrollBar()
+        scroll_bar.setValue(scroll_bar.maximum())
 
     # ------------------------------------------------------------------ #
     # 语音输入（第二优先级）

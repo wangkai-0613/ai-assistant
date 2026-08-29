@@ -2,10 +2,16 @@ import os
 from datetime import date, datetime, timedelta
 
 import pytest
-from PySide6.QtWidgets import QApplication, QScrollArea
+from PySide6.QtWidgets import QApplication, QLabel, QScrollArea
 
 from app.application import build_context, build_window, shutdown
-from app.core.contracts import SystemSummary, TaskDraft, WeatherSummary
+from app.core.contracts import (
+    SystemSummary,
+    Task,
+    TaskDraft,
+    WeatherForecastDay,
+    WeatherSummary,
+)
 
 
 @pytest.fixture(scope="module")
@@ -45,6 +51,24 @@ def test_main_application_registers_services_and_real_pages(
         "task",
         "weather",
     }
+    weather_page = window.pages.widget(4)
+    forecast_days = [
+        WeatherForecastDay(
+            date=date.today() + timedelta(days=offset),
+            description="有雨" if offset == 2 else "晴",
+            temperature_max_c=28 + offset,
+            temperature_min_c=18 + offset,
+            rain_probability=80 if offset == 2 else 10,
+        )
+        for offset in range(7)
+    ]
+    weather_page._render_forecast("武汉", forecast_days)
+    assert len(weather_page.forecast_cards) == 7
+    assert weather_page.weather_label.text() == "武汉 · 未来 7 天"
+    assert weather_page.forecast_cards[2].findChild(
+        QLabel, "forecastWeather"
+    ).text() == "有雨"
+
     assert window.pages.count() == 7
     course_page = window.pages.widget(2)
     scroll = course_page.findChild(QScrollArea)
@@ -57,7 +81,68 @@ def test_main_application_registers_services_and_real_pages(
     assert next_week_start.strftime("%m-%d") in (
         course_page.next_week_grid.itemAtPosition(0, 0).widget().text()
     )
+    ai_page = window.pages.widget(3)
+    ai_bubbles = ai_page.findChildren(QLabel, "aiMessageBubble")
+    ai_avatars = ai_page.findChildren(QLabel, "aiAvatar")
+    assert len(ai_bubbles) == 1
+    assert len(ai_avatars) == 1
+    assert ai_avatars[0].pixmap().isNull() is False
+
+    ai_page._append_history("我", "右侧用户消息")
+    user_bubbles = ai_page.findChildren(QLabel, "userMessageBubble")
+    assert len(user_bubbles) == 1
+    user_row_layout = user_bubbles[0].parentWidget().layout()
+    assert user_row_layout.itemAt(0).spacerItem() is not None
+
     assert window.desktop_pet.popup is not None
+    assert window.windowIcon().isNull() is False
+    assert window.brand_icon.pixmap().isNull() is False
+    assert window.desktop_pet._mascot_pixmap.isNull() is False
+    assert window._tray_icon.icon().isNull() is False
+    home_page = window.pages.widget(0)
+    assert not hasattr(home_page, "_cat_label")
+
+    window.desktop_pet.show()
+    integration_qapp.processEvents()
+    available = window.desktop_pet.screen().availableGeometry()
+    margin = 24
+    assert window.desktop_pet.x() == (
+        available.x() + available.width() - window.desktop_pet.width() - margin
+    )
+    assert window.desktop_pet.y() == (
+        available.y() + available.height() - window.desktop_pet.height() - margin
+    )
+
+    reminder_task = Task(
+        id="reminder-test",
+        title="悬浮提醒测试",
+        due_at=datetime.now() + timedelta(minutes=30),
+    )
+    context.events.task_reminder.emit(reminder_task, "early")
+    integration_qapp.processEvents()
+    reminder_popup = window.desktop_pet.reminder_popup
+    assert reminder_popup.isVisible()
+    assert "悬浮提醒测试" in reminder_popup.message_label.text()
+    assert "30 分钟" in reminder_popup.message_label.text()
+    assert reminder_popup.y() < window.desktop_pet.y()
+    assert "background-color: #ffffff" in reminder_popup.styleSheet()
+    assert "color: #000000" in reminder_popup.styleSheet()
+
+    context.events.daily_summary.emit(
+        """明日提醒
+明天没有课程安排
+大概率有雨，记得带伞"""
+    )
+    integration_qapp.processEvents()
+    assert "明日提醒" in reminder_popup.message_label.text()
+    assert "记得带伞" in reminder_popup.message_label.text()
+    assert "#0d1117" in window.styleSheet()
+    context.get_service("settings").set("theme", "light")
+    context.events.settings_changed.emit()
+    assert "#f7faff" in window.styleSheet()
+    assert "#f7faff" in window.desktop_pet.popup.styleSheet()
+    context.get_service("settings").set("theme", "dark")
+    context.events.settings_changed.emit()
 
     home_page = window.pages.widget(0)
     assert home_page._value_labels["待办任务"].text() == "0 项待完成"
@@ -92,6 +177,7 @@ def test_main_application_registers_services_and_real_pages(
     )
 
     shutdown(context)
+    window.desktop_pet.reminder_popup.close()
     window.desktop_pet.close()
     window._tray_icon.hide()
     window.close()

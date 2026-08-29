@@ -5,6 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -18,8 +19,8 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.app_context import AppContext
-from app.core.contracts import WeatherSummary
-from app.features.weather_system.workers import WeatherFetcher
+from app.core.contracts import WeatherForecastDay
+from app.features.weather_system.workers import WeeklyWeatherFetcher
 
 
 class _Section(QFrame):
@@ -36,10 +37,13 @@ class _Section(QFrame):
 
 
 class WeatherPage(QWidget):
+    WEEKDAY_NAMES = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+
     def __init__(self, context: AppContext, parent=None) -> None:
         super().__init__(parent)
         self.context = context
-        self._fetchers: list[WeatherFetcher] = []
+        self._fetchers: list[WeeklyWeatherFetcher] = []
+        self.forecast_cards: list[QFrame] = []
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
@@ -49,7 +53,7 @@ class WeatherPage(QWidget):
         heading.setObjectName("pageTitle")
         layout.addWidget(heading)
 
-        card = _Section("实时天气")
+        card = _Section("未来一周天气")
         self._card_layout = card.layout()
         row = QHBoxLayout()
         row.setSpacing(10)
@@ -66,48 +70,42 @@ class WeatherPage(QWidget):
 
         self.weather_label = QLabel("输入城市后点击查询")
         self.weather_label.setObjectName("mutedText")
-        self.weather_label.setWordWrap(True)
         self._card_layout.addWidget(self.weather_label)
 
-        self._show_cached()
+        self.forecast_row = QHBoxLayout()
+        self.forecast_row.setSpacing(10)
+        self._card_layout.addLayout(self.forecast_row)
 
+        self._show_cached()
         layout.addWidget(card)
         layout.addStretch(1)
-
         self.query_button.clicked.connect(self._on_query)
 
     def _show_cached(self) -> None:
-        cached = self.context.get_service("weather").get_cached(self.city_input.text().strip())
+        city = self.city_input.text().strip()
+        cached = self.context.get_service("weather").get_weekly_cached(city)
         if cached is not None:
-            rain = f"降雨概率 {cached.rain_probability}%" if cached.rain_probability is not None else "暂无降雨数据"
-            self.weather_label.setText(
-                f"{cached.city}  {cached.temperature_c}°C（缓存）\n"
-                f"{cached.description}\n{rain}"
-            )
+            resolved_city, days = cached
+            self._render_forecast(resolved_city, days, cached=True)
 
     def _on_query(self) -> None:
         city = self.city_input.text().strip()
         if not city:
             self.weather_label.setText("请输入城市名")
             return
-        settings = self.context.get_service("settings")
-        settings.set("city", city)
-
-        self.weather_label.setText("正在查询…")
+        self.context.get_service("settings").set("city", city)
+        self.weather_label.setText("正在查询未来七天天气…")
         self.query_button.setEnabled(False)
-        fetcher = WeatherFetcher(city, self.context.get_service("weather"))
+        fetcher = WeeklyWeatherFetcher(city, self.context.get_service("weather"))
         self._fetchers.append(fetcher)
 
         def cleanup() -> None:
             if fetcher in self._fetchers:
                 self._fetchers.remove(fetcher)
 
-        def on_done(summary: WeatherSummary) -> None:
-            rain = f"降雨概率 {summary.rain_probability}%" if summary.rain_probability is not None else "暂无降雨数据"
-            self.weather_label.setText(
-                f"{summary.city}  {summary.temperature_c}°C\n"
-                f"{summary.description}\n{rain}"
-            )
+        def on_done(result: tuple[str, list[WeatherForecastDay]]) -> None:
+            resolved_city, days = result
+            self._render_forecast(resolved_city, days)
             self.query_button.setEnabled(True)
             cleanup()
 
@@ -119,6 +117,59 @@ class WeatherPage(QWidget):
         fetcher.done.connect(on_done)
         fetcher.failed.connect(on_failed)
         fetcher.start()
+
+    def _render_forecast(
+        self,
+        city: str,
+        days: list[WeatherForecastDay],
+        cached: bool = False,
+    ) -> None:
+        while self.forecast_row.count():
+            item = self.forecast_row.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self.forecast_cards.clear()
+
+        suffix = "（缓存）" if cached else ""
+        self.weather_label.setText(f"{city} · 未来 7 天{suffix}")
+        for day in days:
+            card = QFrame()
+            card.setObjectName("forecastDayCard")
+            card.setMinimumWidth(105)
+            day_layout = QVBoxLayout(card)
+            day_layout.setContentsMargins(10, 12, 10, 12)
+            day_layout.setSpacing(6)
+
+            weekday = self.WEEKDAY_NAMES[day.date.weekday()]
+            date_label = QLabel(f"{weekday} · {day.date:%m-%d}")
+            date_label.setObjectName("forecastDate")
+            date_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            weather_label = QLabel(day.description)
+            weather_label.setObjectName("forecastWeather")
+            weather_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            temperature_label = QLabel(
+                f"{day.temperature_min_c:g}° / {day.temperature_max_c:g}°"
+            )
+            temperature_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            rain_text = (
+                f"降雨 {day.rain_probability}%"
+                if day.rain_probability is not None
+                else "降雨 --"
+            )
+            rain_label = QLabel(rain_text)
+            rain_label.setObjectName("mutedText")
+            rain_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            day_layout.addWidget(date_label)
+            day_layout.addWidget(weather_label)
+            day_layout.addWidget(temperature_label)
+            day_layout.addWidget(rain_label)
+            self.forecast_row.addWidget(card, 1)
+            self.forecast_cards.append(card)
 
 
 class SystemPage(QWidget):
@@ -214,6 +265,12 @@ class SettingsPage(QWidget):
         form.setContentsMargins(0, 12, 0, 0)
         form.setSpacing(12)
 
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItem("深色", "dark")
+        self.theme_combo.addItem("浅色", "light")
+        current_theme = str(self.settings.get("theme", "dark"))
+        theme_index = self.theme_combo.findData(current_theme)
+        self.theme_combo.setCurrentIndex(max(theme_index, 0))
         self.city_input = QLineEdit(self.settings.get("city", ""))
         self.key_input = QLineEdit(self.settings.get("openrouter_key", ""))
         self.key_input.setEchoMode(QLineEdit.EchoMode.Password)
@@ -223,6 +280,7 @@ class SettingsPage(QWidget):
         self.autostart_check = QCheckBox("开机自启")
         self.autostart_check.setChecked(context.get_service("autostart").is_enabled())
 
+        form.addRow("界面主题", self.theme_combo)
         form.addRow("默认城市", self.city_input)
         form.addRow("OpenRouter Key", self.key_input)
         form.addRow("", self.voice_check)
@@ -240,6 +298,7 @@ class SettingsPage(QWidget):
         layout.addStretch(1)
 
         self.save_button.clicked.connect(self._on_save)
+        self.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
         self.ai_browse_button.clicked.connect(self._choose_ai_path)
         self.ai_install_button.clicked.connect(self._install_local_ai)
         self.ai_cancel_button.clicked.connect(self.local_ai.cancel_install)
@@ -300,7 +359,13 @@ class SettingsPage(QWidget):
                     "尚未安装。需要约 5GB 空间，模型从国内魔搭社区下载。"
                 )
 
+    def _on_theme_changed(self) -> None:
+        theme = str(self.theme_combo.currentData())
+        self.settings.set("theme", theme)
+        self.context.events.settings_changed.emit()
+        self.status_label.setText("主题已切换")
     def _on_save(self) -> None:
+        self.settings.set("theme", str(self.theme_combo.currentData()))
         self.settings.set("city", self.city_input.text().strip() or "武汉")
         self.settings.set("openrouter_key", self.key_input.text().strip())
         self.settings.set("voice_enabled", self.voice_check.isChecked())

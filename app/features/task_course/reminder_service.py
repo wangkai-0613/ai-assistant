@@ -8,11 +8,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from datetime import time as dtime
 
-from PySide6.QtCore import QObject, QTimer
+from PySide6.QtCore import QObject, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -21,18 +22,37 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from app.core.contracts import Course, Task
+from app.core.contracts import Course, Task, WeatherSummary
 from app.features.task_course import voice
 from app.features.task_course.task_service import SNOOZE_MINUTES
 
 CHECK_INTERVAL_SECONDS = 30
 COURSE_LEAD_MINUTES = 15
+TASK_LEAD_MINUTES = 30
+DAILY_SUMMARY_TIME = dtime(22, 40)
+RAIN_REMINDER_THRESHOLD = 60
 
 
 @dataclass(frozen=True, slots=True)
 class CourseAlert:
     course: Course
     start_at: datetime
+
+
+class _TomorrowWeatherWorker(QThread):
+    finished_ok = Signal(object, str)
+
+    def __init__(self, weather_service, city: str, parent=None):
+        super().__init__(parent)
+        self._weather_service = weather_service
+        self._city = city
+
+    def run(self) -> None:
+        try:
+            summary = asyncio.run(self._weather_service.fetch_tomorrow(self._city))
+            self.finished_ok.emit(summary, "")
+        except Exception as exc:  # noqa: BLE001 - 晚间提醒失败不能影响主程序
+            self.finished_ok.emit(None, str(exc))
 
 
 class ReminderService(QObject):
@@ -48,7 +68,10 @@ class ReminderService(QObject):
         self._clock = clock or datetime.now
         self._lead = timedelta(minutes=lead_minutes)
         self._notified_courses: set[str] = set()
+        self._notified_tasks: set[str] = set()
         self._open_dialogs: list[QDialog] = []
+        self._daily_summary_dates: set[str] = set()
+        self._weather_worker: _TomorrowWeatherWorker | None = None
 
         self._timer = QTimer(self)
         self._timer.setInterval(check_interval * 1000)
@@ -61,6 +84,9 @@ class ReminderService(QObject):
 
     def stop(self) -> None:
         self._timer.stop()
+        worker = self._weather_worker
+        if worker is not None and worker.isRunning():
+            worker.wait(12000)
 
     # ---- 巡检 ----
 
@@ -68,14 +94,23 @@ class ReminderService(QObject):
         """执行一次到期检查并弹出提醒，异常全部吞掉，不影响主程序。"""
         try:
             now = self._clock()
-            due_tasks = self._context.get_service("task").due_pending(now)
+            task_service = self._context.get_service("task")
+            due_tasks = task_service.due_pending(now)
+            task_alerts = self.collect_task_alerts(now)
             course_alerts = self.collect_course_alerts(now)
+            self._maybe_show_daily_summary(now)
         except Exception:  # noqa: BLE001 巡检失败不应崩溃主程序
             return
-        if not due_tasks and not course_alerts:
+        if not due_tasks and not task_alerts and not course_alerts:
             return
 
         lines: list[str] = []
+        for task, phase in task_alerts:
+            self._context.events.task_reminder.emit(task, phase)
+            if phase == "early":
+                lines.append(f"任务 {task.title} 还有 30 分钟截止")
+            else:
+                lines.append(f"任务 {task.title} 截止时间已到")
         for task in due_tasks:
             lines.append(f"任务 {task.title} 已到期")
             self._show_task_dialog(task)
@@ -86,6 +121,92 @@ class ReminderService(QObject):
 
         if self._voice_enabled():
             voice.speak("。".join(lines))
+
+    def collect_task_alerts(self, now: datetime) -> list[tuple[Task, str]]:
+        """收集截止前 30 分钟和截止时提醒，同一截止时间只提醒一次。"""
+        alerts: list[tuple[Task, str]] = []
+        lead = timedelta(minutes=TASK_LEAD_MINUTES)
+        for task in self._context.get_service("task").list_all():
+            if task.completed:
+                continue
+            remaining = task.due_at - now
+            phase = ""
+            if timedelta(0) < remaining <= lead:
+                phase = "early"
+            elif remaining <= timedelta(0):
+                phase = "due"
+            if not phase:
+                continue
+            key = f"{task.id}@{task.due_at.isoformat()}:{phase}"
+            if key in self._notified_tasks:
+                continue
+            self._notified_tasks.add(key)
+            alerts.append((task, phase))
+        return alerts
+
+    def _maybe_show_daily_summary(self, now: datetime) -> None:
+        if now.time() < DAILY_SUMMARY_TIME:
+            return
+        date_key = now.date().isoformat()
+        if date_key in self._daily_summary_dates:
+            return
+        self._daily_summary_dates.add(date_key)
+
+        courses = self._context.get_service("course").list_tomorrow(now.date())
+        settings = self._context.get_service("settings")
+        city = str(settings.get("city", "武汉"))
+        weather_service = self._context.get_service("weather")
+        cached = weather_service.get_tomorrow_cached(city)
+        if cached is not None:
+            self._emit_daily_summary(courses, cached)
+            return
+
+        worker = _TomorrowWeatherWorker(weather_service, city, self)
+        worker.finished_ok.connect(
+            lambda weather, error: self._emit_daily_summary(courses, weather, error)
+        )
+        worker.finished.connect(self._on_weather_worker_finished)
+        self._weather_worker = worker
+        worker.start()
+
+    def _on_weather_worker_finished(self) -> None:
+        worker, self._weather_worker = self._weather_worker, None
+        if worker is not None:
+            worker.deleteLater()
+
+    def _emit_daily_summary(
+        self,
+        courses: list[Course],
+        weather: WeatherSummary | None,
+        error: str = "",
+    ) -> None:
+        lines = ["明日提醒"]
+        if courses:
+            lines.append("明日课程：")
+            for course in courses:
+                room = f"（{course.room}）" if course.room else ""
+                lines.append(f"{course.start_time} {course.name}{room}")
+        else:
+            lines.append("明天没有课程安排")
+
+        if weather is None:
+            lines.append("明日天气暂时无法获取")
+        else:
+            rain = (
+                f"，降雨概率 {weather.rain_probability}%"
+                if weather.rain_probability is not None
+                else ""
+            )
+            lines.append(
+                f"明日天气：{weather.description}，"
+                f"约 {weather.temperature_c:g}°C{rain}"
+            )
+            if _should_take_umbrella(weather):
+                lines.append("大概率有雨，记得带伞 ☂")
+
+        self._context.events.daily_summary.emit("\n".join(lines))
+        if error:
+            self._context.events.status_message.emit(f"明日天气获取失败：{error}")
 
     def collect_course_alerts(self, now: datetime) -> list[CourseAlert]:
         """返回需要课前提醒的课程，并记录已提醒避免重复。"""
@@ -188,6 +309,18 @@ class ReminderService(QObject):
         except LookupError:
             return True
         return bool(settings.get("voice_enabled", True))
+
+
+
+
+def _should_take_umbrella(weather: WeatherSummary) -> bool:
+    if (
+        weather.rain_probability is not None
+        and weather.rain_probability >= RAIN_REMINDER_THRESHOLD
+    ):
+        return True
+    description = weather.description.lower()
+    return any(keyword in description for keyword in ("雨", "雷", "storm", "shower", "rain"))
 
 
 def _parse_time(raw: str) -> dtime:

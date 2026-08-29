@@ -41,7 +41,6 @@ class HomePage(QWidget):
         layout.addWidget(self._build_welcome())
         layout.addWidget(self._build_quick_actions())
         layout.addWidget(self._build_cards())
-        layout.addWidget(self._build_cat_section())
         layout.addStretch(1)
 
         scroll.setWidget(content)

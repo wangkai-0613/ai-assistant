@@ -50,9 +50,11 @@ def build_window(context: AppContext) -> MainWindow:
     for index, page in enumerate(pages, start=1):
         window.replace_page(index, page)
     pet = DesktopPet()
+    pet.apply_theme(str(context.get_service("settings").get("theme", "dark")))
     pet.popup.navigate.connect(window._navigate_to)
     window.desktop_pet = pet
-
+    context.events.task_reminder.connect(pet.show_task_reminder)
+    context.events.daily_summary.connect(pet.show_daily_summary)
     return window
 
 

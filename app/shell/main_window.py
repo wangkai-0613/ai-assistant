@@ -35,6 +35,11 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self.context = context
         self.setWindowTitle("小云桌面助手")
+        self._mascot_icon_path = (
+            Path(__file__).resolve().parents[1] / "resources" / "cat_mascot.png"
+        )
+        if self._mascot_icon_path.exists():
+            self.setWindowIcon(QIcon(str(self._mascot_icon_path)))
         self.resize(1040, 700)
         self.setMinimumSize(860, 560)
 
@@ -49,8 +54,27 @@ class MainWindow(QMainWindow):
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(16, 24, 16, 20)
 
-        brand = QLabel("🐱  小云助手")
-        brand.setObjectName("brand")
+        brand = QWidget()
+        brand_layout = QHBoxLayout(brand)
+        brand_layout.setContentsMargins(0, 0, 0, 0)
+        brand_layout.setSpacing(8)
+        self.brand_icon = QLabel()
+        self.brand_icon.setFixedSize(34, 34)
+        self.brand_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if self._mascot_icon_path.exists():
+            brand_pixmap = QPixmap(str(self._mascot_icon_path))
+            self.brand_icon.setPixmap(
+                brand_pixmap.scaled(
+                    self.brand_icon.size(),
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+        brand_text = QLabel("小云助手")
+        brand_text.setObjectName("brand")
+        brand_layout.addWidget(self.brand_icon)
+        brand_layout.addWidget(brand_text)
+        brand_layout.addStretch(1)
         self.navigation = QListWidget()
         self.navigation.addItems([name for name, _ in self.PAGE_SPECS])
         self.navigation.setCurrentRow(0)
@@ -76,6 +100,7 @@ class MainWindow(QMainWindow):
             lambda index: home_page.refresh_data() if index == 0 else None
         )
         context.events.status_message.connect(self.statusBar().showMessage)
+        context.events.settings_changed.connect(self._on_settings_changed)
         self._load_stylesheet()
         self._setup_tray()
 
@@ -90,10 +115,23 @@ class MainWindow(QMainWindow):
             self.navigation.setCurrentRow(index)
 
     def _load_stylesheet(self) -> None:
-        style_path = Path(__file__).resolve().parents[1] / "resources" / "style_dark.qss"
-        if style_path.exists():
-            self.setStyleSheet(style_path.read_text(encoding="utf-8"))
+        self.apply_theme()
 
+    def apply_theme(self, theme: str | None = None) -> None:
+        selected = theme or str(self.context.get_service("settings").get("theme", "dark"))
+        if selected not in {"dark", "light"}:
+            selected = "dark"
+        style_path = (
+            Path(__file__).resolve().parents[1] / "resources" / f"style_{selected}.qss"
+        )
+        self.setStyleSheet(style_path.read_text(encoding="utf-8") if style_path.exists() else "")
+
+    def _on_settings_changed(self) -> None:
+        theme = str(self.context.get_service("settings").get("theme", "dark"))
+        self.apply_theme(theme)
+        pet = getattr(self, "desktop_pet", None)
+        if pet is not None:
+            pet.apply_theme(theme)
     def _setup_tray(self) -> None:
         self._tray_icon = QSystemTrayIcon(self)
         self._tray_icon.setIcon(self._make_tray_icon())
@@ -118,6 +156,8 @@ class MainWindow(QMainWindow):
         self._first_hide = True
 
     def _make_tray_icon(self) -> QIcon:
+        if self._mascot_icon_path.exists():
+            return QIcon(str(self._mascot_icon_path))
         pixmap = QPixmap(64, 64)
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
